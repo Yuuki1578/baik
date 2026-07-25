@@ -6,12 +6,15 @@
 //! `EXPR`   : `COMMA`
 //! `COMMA`  : `EQU` ( ( "," ) `EQU` )*
 //! `EQU`    : `CMP` ( ( "==" | "!=" ) `CMP` )*
-//! `CMP`    : `TERM` ( ( ">" | ">=" | "<" | "<=" ) `TERM` )*
+//! `CMP`    : `BITMOV` ( ( ">" | ">=" | "<" | "<=" ) `BITMOV` )*
+//! `BITMOV` : `BITOP` ( ( "<<" | ">>" ) `BITOP` )*
+//! `BITOP`  : `TERM` ( ( "&" | "|" | "^" ) `TERM` )*
 //! `TERM`   : `FACTOR` ( ( "+" | "-" ) `FACTOR` )*
 //! `FACTOR` : `UNARY` ( ( "*" | "/" ) `UNARY` )*
-//! `UNARY`  : ( "-" | "!" ) `UNARY` | `PRIMARY`
+//! `UNARY`  : ( "-" | "!" | "~" ) `UNARY` | `PRIMARY`
 //! `PRIMARY`: `STRING` | `NUMBER` | `FLOAT` | "benar" | "salah" | "hampa" | "(" `EXPR` ")"
 const std = @import("std");
+const baik = @import("baik");
 const log = std.log;
 const ExprPool = std.heap.MemoryPool(Expr);
 const Allocator = std.mem.Allocator;
@@ -22,18 +25,23 @@ const Literal = Lexer.Literal;
 const OperationError = Lexer.Literal.OperationError;
 
 const Self = @This();
-const ParsingError = error{UnexpectedToken};
+const ParsingError = error{
+    UnexpectedToken,
+    NotExpression,
+};
+
 const ParseExprResult = ParsingError!*Expr;
 
 allocator: Allocator,
 expr_pool: ExprPool,
 tokens: []const Token,
-current: usize,
+current: u64,
 
 pub fn init(allocator: Allocator, tokens: []const Token) !Self {
+    const prealloc_size = baik.determinePreallocSize(Token, tokens);
     return .{
         .allocator = allocator,
-        .expr_pool = try .initCapacity(allocator, 64),
+        .expr_pool = try .initCapacity(allocator, prealloc_size),
         .tokens = tokens,
         .current = 0,
     };
@@ -111,7 +119,7 @@ pub fn parseExpr(self: *Self) ParseExprResult {
 fn commaExpr(self: *Self) ParseExprResult {
     var lhs = try self.conditionExpr();
 
-    while (self.matchTokens(&.{ .EqualEqual, .BangEqual })) {
+    while (self.matchTokens(&.{.Comma})) {
         const operator = self.previous().kind;
         const rhs = try self.conditionExpr();
         lhs = self.initExpr(.{ .Binary = .{
@@ -157,25 +165,9 @@ fn equalityExpr(self: *Self) ParseExprResult {
 }
 
 fn compareExpr(self: *Self) ParseExprResult {
-    var lhs = try self.bitOpExpr();
-
-    while (self.matchTokens(&.{ .Less, .LessEqual, .Greater, .GreaterEqual })) {
-        const operator = self.previous().kind;
-        const rhs = try self.bitOpExpr();
-        lhs = self.initExpr(.{ .Binary = .{
-            .operator = operator,
-            .lhs = lhs,
-            .rhs = rhs,
-        } });
-    }
-
-    return lhs;
-}
-
-fn bitOpExpr(self: *Self) ParseExprResult {
     var lhs = try self.bitMoveExpr();
 
-    while (self.matchTokens(&.{ .Ampersand, .Caret, .Bar })) {
+    while (self.matchTokens(&.{ .Less, .LessEqual, .Greater, .GreaterEqual })) {
         const operator = self.previous().kind;
         const rhs = try self.bitMoveExpr();
         lhs = self.initExpr(.{ .Binary = .{
@@ -189,9 +181,25 @@ fn bitOpExpr(self: *Self) ParseExprResult {
 }
 
 fn bitMoveExpr(self: *Self) ParseExprResult {
-    var lhs = try self.termExpr();
+    var lhs = try self.bitOpExpr();
 
     while (self.matchTokens(&.{ .LessLess, .GreaterGreater })) {
+        const operator = self.previous().kind;
+        const rhs = try self.bitOpExpr();
+        lhs = self.initExpr(.{ .Binary = .{
+            .operator = operator,
+            .lhs = lhs,
+            .rhs = rhs,
+        } });
+    }
+
+    return lhs;
+}
+
+fn bitOpExpr(self: *Self) ParseExprResult {
+    var lhs = try self.termExpr();
+
+    while (self.matchTokens(&.{ .Ampersand, .Caret, .Bar })) {
         const operator = self.previous().kind;
         const rhs = try self.termExpr();
         lhs = self.initExpr(.{ .Binary = .{
@@ -258,6 +266,7 @@ fn primaryExpr(self: *Self) ParseExprResult {
         .Int,
         .Float,
         .String,
+        .Hampa,
     })) {
         return self.initExpr(.{
             .Primary = self.previous().data orelse unreachable,
@@ -270,7 +279,7 @@ fn primaryExpr(self: *Self) ParseExprResult {
         return inside;
     }
 
-    return self.initExpr(.{ .Primary = .Nil });
+    return error.NotExpression;
 }
 
 fn initExpr(self: *Self, expr: Expr) *Expr {
@@ -297,9 +306,7 @@ pub const Expr = union(enum) {
     } || OperationError;
 
     const EvalResult = EvalError!Literal;
-    pub fn eval(expr: *Expr) EvalResult {
-        return Self.eval(expr);
-    }
+    pub const eval = Self.eval;
 };
 
 fn eval(self: *Expr) Expr.EvalResult {
@@ -347,6 +354,7 @@ fn eval(self: *Expr) Expr.EvalResult {
                 .Caret => return lhs.bitXor(rhs),
                 .LessLess => return lhs.bitShiftLeft(rhs),
                 .GreaterGreater => return lhs.bitShiftRight(rhs),
+                .Comma => return rhs,
                 else => unreachable,
             }
         },

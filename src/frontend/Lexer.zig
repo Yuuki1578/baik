@@ -2,6 +2,7 @@
 //! source string into an individual tokens to later
 //! feed on `Parser`.
 const std = @import("std");
+const baik = @import("baik");
 const ascii = std.ascii;
 const fmt = std.fmt;
 const print = std.debug.print;
@@ -23,16 +24,16 @@ fn isAllBase(ch: u8) bool {
 }
 
 pub var keywords_table: std.StringHashMap(TokenKind) = undefined;
-pub var error_count: usize = 0;
+pub var error_count: u64 = 0;
 
 const Self = @This();
 
 allocator: Allocator,
 tokens: TokenList,
 source: []const u8,
-begin: usize,
-current: usize,
-line: usize,
+begin: u64,
+current: u64,
+line: u64,
 
 fn report(self: Self, comptime msg: []const u8, any: anytype) void {
     log.err("[line {}]: " ++ msg, .{self.line} ++ any);
@@ -42,34 +43,40 @@ fn report(self: Self, comptime msg: []const u8, any: anytype) void {
 fn initKeywordsList(allocator: Allocator) !void {
     keywords_table = .init(allocator);
 
-    try keywords_table.put("dan", TokenKind.Dan);
-    try keywords_table.put("tipe", TokenKind.Tipe);
-    try keywords_table.put("lain", TokenKind.Lain);
-    try keywords_table.put("salah", TokenKind.Salah);
-    try keywords_table.put("fungsi", TokenKind.Fungsi);
-    try keywords_table.put("untuk", TokenKind.Untuk);
-    try keywords_table.put("jika", TokenKind.Jika);
-    try keywords_table.put("hampa", TokenKind.Hampa);
-    try keywords_table.put("atau", TokenKind.Atau);
-    try keywords_table.put("cetak", TokenKind.Cetak);
-    try keywords_table.put("kembali", TokenKind.Kembali);
-    try keywords_table.put("indux", TokenKind.Induk);
-    try keywords_table.put("ini", TokenKind.Ini);
-    try keywords_table.put("benar", TokenKind.Benar);
-    try keywords_table.put("var", TokenKind.Var);
-    try keywords_table.put("selama", TokenKind.Selama);
+    try keywords_table.put("dan", .Dan);
+    try keywords_table.put("tipe", .Tipe);
+    try keywords_table.put("lain", .Lain);
+    try keywords_table.put("salah", .Salah);
+    try keywords_table.put("fungsi", .Fungsi);
+    try keywords_table.put("untuk", .Untuk);
+    try keywords_table.put("jika", .Jika);
+    try keywords_table.put("hampa", .Hampa);
+    try keywords_table.put("atau", .Atau);
+    try keywords_table.put("cetak", .Cetak);
+    try keywords_table.put("kembali", .Kembali);
+    try keywords_table.put("indux", .Induk);
+    try keywords_table.put("ini", .Ini);
+    try keywords_table.put("benar", .Benar);
+    try keywords_table.put("var", .Var);
+    try keywords_table.put("selama", .Selama);
 }
 
 pub fn init(allocator: Allocator, source: []const u8) !Self {
+    const prealloc_size = baik.determinePreallocSize(u8, source);
     try initKeywordsList(allocator);
     return .{
         .allocator = allocator,
-        .tokens = .empty,
+        .tokens = try .initCapacity(allocator, prealloc_size),
         .source = source,
         .begin = 0,
         .current = 0,
         .line = 1,
     };
+}
+
+pub fn deinit(self: *Self) void {
+    self.tokens.deinit(self.allocator);
+    keywords_table.deinit();
 }
 
 fn isDone(self: Self) bool {
@@ -85,7 +92,7 @@ fn append(self: *Self, kind: TokenKind, data: ?Literal) !void {
     });
 }
 
-fn peekExact(self: Self, probe: usize) u8 {
+fn peekExact(self: Self, probe: u64) u8 {
     const probe_exact = self.current + probe;
     if (!self.isDone() and probe_exact < self.source.len) {
         return self.source[probe_exact];
@@ -323,11 +330,6 @@ pub fn scan(self: *Self) !void {
     try self.append(.Eof, null);
 }
 
-pub fn deinit(self: *Self) void {
-    self.tokens.deinit(self.allocator);
-    keywords_table.deinit();
-}
-
 pub const TokenKind = enum {
     LeftParen,
     RightParen,
@@ -350,6 +352,7 @@ pub const TokenKind = enum {
     BangEqual,
     Equal,
     EqualEqual,
+
     Greater,
     GreaterGreater,
     GreaterEqual,
@@ -662,7 +665,7 @@ pub const Literal = union(enum) {
 pub const Token = struct {
     kind: TokenKind,
     lexeme: []const u8,
-    line: usize,
+    line: u64,
     data: ?Literal,
 
     pub const empty: @This() = .{
