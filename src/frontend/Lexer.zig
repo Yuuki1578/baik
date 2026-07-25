@@ -279,6 +279,8 @@ fn identsOrKeywords(self: *Self) !void {
         try self.append(kind, .{ .Bool = true });
     } else if (kind == .Salah) {
         try self.append(kind, .{ .Bool = false });
+    } else if (kind == .Hampa) {
+        try self.append(kind, .Nil);
     } else {
         try self.append(kind, null);
     }

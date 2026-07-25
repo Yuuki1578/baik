@@ -16,7 +16,7 @@ pub fn repl(io: std.Io, allocator: Allocator) !void {
         var stackbuf: [64]u8 = @splat(0);
         const readed = stdin.readStreaming(io, &.{&stackbuf}) catch |err| switch (err) {
             error.EndOfStream => break,
-            else => return,
+            else => @panic(@errorName(err)),
         };
 
         try buffer.appendSlice(allocator, stackbuf[0 .. readed - 1]);
@@ -36,7 +36,7 @@ pub fn repl(io: std.Io, allocator: Allocator) !void {
             };
 
             const evaluated = expr.eval() catch |err| {
-                std.log.err("{s}\n", .{@errorName(err)});
+                std.log.err("{s}", .{@errorName(err)});
                 continue;
             };
 

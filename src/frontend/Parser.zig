@@ -269,7 +269,7 @@ fn primaryExpr(self: *Self) ParseExprResult {
         .Hampa,
     })) {
         return self.initExpr(.{
-            .Primary = self.previous().data orelse unreachable,
+            .Primary = self.previous().data orelse return error.NotExpression,
         });
     }
 
