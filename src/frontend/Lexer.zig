@@ -2,7 +2,7 @@
 //! source string into an individual tokens to later
 //! feed on `Parser`.
 const std = @import("std");
-const baik = @import("baik");
+const common = @import("../common.zig");
 const ascii = std.ascii;
 const fmt = std.fmt;
 const print = std.debug.print;
@@ -10,7 +10,17 @@ const log = std.log;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const TokenList = std.ArrayList(Token);
-const KeywordMap = std.StringHashMap(TokenKind);
+const KeywordMap = std.StaticStringMap(TokenKind);
+
+allocator: Allocator,
+tokens: TokenList,
+source: []const u8,
+begin: u64,
+current: u64,
+line: u64,
+
+pub var keywords_table: KeywordMap = undefined;
+pub var error_count: u64 = 0;
 
 fn isAlphanumeric(ch: u8) bool {
     return ascii.isAlphanumeric(ch) or ch == '_';
@@ -23,47 +33,39 @@ fn isAllBase(ch: u8) bool {
     };
 }
 
-pub var keywords_table: std.StringHashMap(TokenKind) = undefined;
-pub var error_count: u64 = 0;
-
 const Self = @This();
-
-allocator: Allocator,
-tokens: TokenList,
-source: []const u8,
-begin: u64,
-current: u64,
-line: u64,
 
 fn report(self: Self, comptime msg: []const u8, any: anytype) void {
     log.err("[line {}]: " ++ msg, .{self.line} ++ any);
     error_count += 1;
 }
 
-fn initKeywordsList(allocator: Allocator) !void {
-    keywords_table = .init(allocator);
-
-    try keywords_table.put("dan", .Dan);
-    try keywords_table.put("tipe", .Tipe);
-    try keywords_table.put("lain", .Lain);
-    try keywords_table.put("salah", .Salah);
-    try keywords_table.put("fungsi", .Fungsi);
-    try keywords_table.put("untuk", .Untuk);
-    try keywords_table.put("jika", .Jika);
-    try keywords_table.put("hampa", .Hampa);
-    try keywords_table.put("atau", .Atau);
-    try keywords_table.put("cetak", .Cetak);
-    try keywords_table.put("kembali", .Kembali);
-    try keywords_table.put("indux", .Induk);
-    try keywords_table.put("ini", .Ini);
-    try keywords_table.put("benar", .Benar);
-    try keywords_table.put("var", .Var);
-    try keywords_table.put("selama", .Selama);
+fn initKeywordList() void {
+    keywords_table = .initComptime(.{
+        .{ "dan", .dan },
+        .{ "tipe", .tipe },
+        .{ "lain", .lain },
+        .{ "salah", .salah },
+        .{ "fungsi", .fungsi },
+        .{ "untuk", .untuk },
+        .{ "jika", .jika },
+        .{ "hampa", .hampa },
+        .{ "atau", .atau },
+        .{ "cetak", .cetak },
+        .{ "kembali", .kembali },
+        .{ "indux", .induk },
+        .{ "ini", .ini },
+        .{ "benar", .benar },
+        .{ "variabel", .variabel },
+        .{ "selama", .selama },
+        .{ "mulai", .mulai },
+        .{ "akhir", .akhir },
+    });
 }
 
 pub fn init(allocator: Allocator, source: []const u8) !Self {
-    const prealloc_size = baik.determinePreallocSize(u8, source);
-    try initKeywordsList(allocator);
+    const prealloc_size = common.determinePreallocSize(u8, source);
+    initKeywordList();
     return .{
         .allocator = allocator,
         .tokens = try .initCapacity(allocator, prealloc_size),
@@ -76,24 +78,27 @@ pub fn init(allocator: Allocator, source: []const u8) !Self {
 
 pub fn deinit(self: *Self) void {
     self.tokens.deinit(self.allocator);
-    keywords_table.deinit();
 }
 
 fn isDone(self: Self) bool {
     return self.current >= self.source.len;
 }
 
+fn fromBeginToCurrent(self: Self) []const u8 {
+    return self.source[self.begin..self.current];
+}
+
 fn append(self: *Self, kind: TokenKind, data: ?Literal) !void {
     try self.tokens.append(self.allocator, .{
         .kind = kind,
-        .lexeme = self.source[self.begin..self.current],
+        .lexeme = self.fromBeginToCurrent(),
         .line = self.line,
         .data = data,
     });
 }
 
-fn peekExact(self: Self, probe: u64) u8 {
-    const probe_exact = self.current + probe;
+fn peekExact(self: Self, probe_ahead: u64) u8 {
+    const probe_exact = self.current + probe_ahead;
     if (!self.isDone() and probe_exact < self.source.len) {
         return self.source[probe_exact];
     }
@@ -172,7 +177,7 @@ fn comments(self: *Self) !void {
         }
         self.report("Unterminated comment, missing {s}", .{"\"*/\""});
     } else {
-        try self.append(.Slash, null);
+        try self.append(.slash, null);
     }
 }
 
@@ -181,14 +186,14 @@ fn strings(self: *Self) !void {
         switch (self.peek()) {
             '`' => {
                 _ = self.next();
-                var lexeme = self.source[self.begin..self.current];
+                var lexeme = self.fromBeginToCurrent();
                 if (lexeme.len < 3) {
                     lexeme = "";
                 } else {
                     lexeme = lexeme[1 .. lexeme.len - 1];
                 }
 
-                try self.append(.String, .{ .String = lexeme });
+                try self.append(.string, .{ .string = lexeme });
                 return;
             },
 
@@ -216,13 +221,13 @@ fn digits(self: *Self, context: u8) !void {
             _ = self.next();
         }
 
-        const lexeme = self.source[self.begin..self.current];
+        const lexeme = self.fromBeginToCurrent();
         const num = fmt.parseInt(i64, lexeme, 0) catch |err| blk: {
             self.report("Failed parsing integer, {any}", .{err});
             break :blk 0;
         };
 
-        try self.append(.Int, .{ .Int = num });
+        try self.append(.int, .{ .int = num });
     } else {
         var has_dot_before = false;
 
@@ -240,22 +245,22 @@ fn digits(self: *Self, context: u8) !void {
             _ = self.next();
         }
 
-        const lexeme = self.source[self.begin..self.current];
+        const lexeme = self.fromBeginToCurrent();
         var data: Literal = undefined;
         var kind: TokenKind = undefined;
 
         if (has_dot_before) {
-            kind = .Float;
+            kind = .float;
             data = .{
-                .Float = fmt.parseFloat(f64, lexeme) catch |err| blk: {
+                .float = fmt.parseFloat(f64, lexeme) catch |err| blk: {
                     self.report("Failed parsing float, {any}", .{err});
                     break :blk 0.0;
                 },
             };
         } else {
-            kind = .Int;
+            kind = .int;
             data = .{
-                .Int = fmt.parseInt(i64, lexeme, 10) catch |err| blk: {
+                .int = fmt.parseInt(i64, lexeme, 10) catch |err| blk: {
                     self.report("Failed parsing integer, {any}", .{err});
                     break :blk 0;
                 },
@@ -274,13 +279,13 @@ fn identsOrKeywords(self: *Self) !void {
         _ = self.next();
     }
 
-    const kind = keywords_table.get(self.source[self.begin..self.current]) orelse .Identifier;
-    if (kind == .Benar) {
-        try self.append(kind, .{ .Bool = true });
-    } else if (kind == .Salah) {
-        try self.append(kind, .{ .Bool = false });
-    } else if (kind == .Hampa) {
-        try self.append(kind, .Nil);
+    const kind = keywords_table.get(self.fromBeginToCurrent()) orelse .identifier;
+    if (kind == .benar) {
+        try self.append(kind, .{ .boolean = true });
+    } else if (kind == .salah) {
+        try self.append(kind, .{ .boolean = false });
+    } else if (kind == .hampa) {
+        try self.append(kind, .hampa);
     } else {
         try self.append(kind, null);
     }
@@ -293,26 +298,26 @@ fn scanOnce(self: *Self) !void {
         ' ', '\t', '\r' => {},
         '\n' => self.line += 1,
 
-        '(' => try self.append(.LeftParen, null),
-        ')' => try self.append(.RightParen, null),
-        '{' => try self.append(.LeftBrace, null),
-        '}' => try self.append(.RightBrace, null),
-        ',' => try self.append(.Comma, null),
-        '.' => try self.append(.Dot, null),
-        '-' => try self.append(.Minus, null),
-        '+' => try self.append(.Plus, null),
-        '*' => try self.append(.Star, null),
-        '%' => try self.append(.Percent, null),
-        ';' => try self.append(.Semicolon, null),
-        '|' => try self.append(.Bar, null),
-        '&' => try self.append(.Ampersand, null),
-        '~' => try self.append(.Tilde, null),
-        '^' => try self.append(.Caret, null),
+        '(' => try self.append(.left_paren, null),
+        ')' => try self.append(.right_paren, null),
+        '{' => try self.append(.left_brace, null),
+        '}' => try self.append(.right_brace, null),
+        ',' => try self.append(.comma, null),
+        '.' => try self.append(.dot, null),
+        '-' => try self.append(.minus, null),
+        '+' => try self.append(.plus, null),
+        '*' => try self.append(.star, null),
+        '%' => try self.append(.percent, null),
+        ';' => try self.append(.semicolon, null),
+        '|' => try self.append(.bar, null),
+        '&' => try self.append(.ampersand, null),
+        '~' => try self.append(.tilde, null),
+        '^' => try self.append(.caret, null),
 
-        '=' => try self.appendIfMatches('=', .EqualEqual, .Equal),
-        '!' => try self.appendIfMatches('=', .BangEqual, .Bang),
-        '<' => try self.appendIf2Matches('=', '<', .LessEqual, .LessLess, .Less),
-        '>' => try self.appendIf2Matches('=', '>', .GreaterEqual, .GreaterGreater, .Greater),
+        '=' => try self.appendIfMatches('=', .equal_equal, .equal),
+        '!' => try self.appendIfMatches('=', .bang_equal, .bang),
+        '<' => try self.appendIf2Matches('=', '<', .less_equal, .less_less, .less),
+        '>' => try self.appendIf2Matches('=', '>', .greater_equal, .greater_greater, .greater),
 
         '/' => try self.comments(),
         '`' => try self.strings(),
@@ -329,70 +334,72 @@ pub fn scan(self: *Self) !void {
         self.begin = self.current;
     }
 
-    try self.append(.Eof, null);
+    try self.append(.eof, null);
 }
 
 pub const TokenKind = enum {
-    LeftParen,
-    RightParen,
-    LeftBrace,
-    RightBrace,
-    Comma,
-    Dot,
-    Minus,
-    Plus,
-    Semicolon,
-    Slash,
-    Star,
-    Percent,
-    Bar,
-    Ampersand,
-    Tilde,
-    Caret,
+    left_paren,
+    right_paren,
+    left_brace,
+    right_brace,
+    comma,
+    dot,
+    minus,
+    plus,
+    semicolon,
+    slash,
+    star,
+    percent,
+    bar,
+    ampersand,
+    tilde,
+    caret,
 
-    Bang,
-    BangEqual,
-    Equal,
-    EqualEqual,
+    bang,
+    bang_equal,
+    equal,
+    equal_equal,
 
-    Greater,
-    GreaterGreater,
-    GreaterEqual,
-    Less,
-    LessLess,
-    LessEqual,
+    greater,
+    greater_greater,
+    greater_equal,
+    less,
+    less_less,
+    less_equal,
 
-    Identifier,
-    String,
-    Int,
-    Float,
+    identifier,
+    string,
+    int,
+    float,
 
-    Dan,
-    Tipe,
-    Lain,
-    Salah,
-    Fungsi,
-    Untuk,
-    Jika,
-    Hampa,
-    Atau,
-    Cetak,
-    Kembali,
-    Induk,
-    Ini,
-    Benar,
-    Var,
-    Selama,
+    dan,
+    tipe,
+    lain,
+    salah,
+    fungsi,
+    untuk,
+    jika,
+    hampa,
+    atau,
+    cetak,
+    kembali,
+    induk,
+    ini,
+    benar,
+    variabel,
+    selama,
+    mulai,
+    akhir,
 
-    Eof,
+    eof,
 };
 
 pub const Literal = union(enum) {
-    String: []const u8,
-    Int: i64,
-    Float: f64,
-    Bool: bool,
-    Nil,
+    string: []const u8,
+    int: i64,
+    float: f64,
+    boolean: bool,
+    hampa,
 
     pub const OperationError = error{
         TypeMissMatch,
@@ -400,8 +407,8 @@ pub const Literal = union(enum) {
 
     pub fn bitAnd(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| return .{ .Int = lv & rv },
+            .int => |lv| switch (rhs) {
+                .int => |rv| return .{ .int = lv & rv },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -410,8 +417,8 @@ pub const Literal = union(enum) {
 
     pub fn bitOr(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| return .{ .Int = lv | rv },
+            .int => |lv| switch (rhs) {
+                .int => |rv| return .{ .int = lv | rv },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -420,8 +427,8 @@ pub const Literal = union(enum) {
 
     pub fn bitXor(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| return .{ .Int = lv ^ rv },
+            .int => |lv| switch (rhs) {
+                .int => |rv| return .{ .int = lv ^ rv },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -430,8 +437,8 @@ pub const Literal = union(enum) {
 
     pub fn bitShiftLeft(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| return .{ .Int = lv <<| @as(u64, @abs(rv)) },
+            .int => |lv| switch (rhs) {
+                .int => |rv| return .{ .int = lv <<| @as(u64, @abs(rv)) },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -440,10 +447,10 @@ pub const Literal = union(enum) {
 
     pub fn bitShiftRight(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| {
+            .int => |lv| switch (rhs) {
+                .int => |rv| {
                     const shifter: u6 = @intCast(@abs(rv));
-                    return .{ .Int = lv >> shifter };
+                    return .{ .int = lv >> shifter };
                 },
                 else => return error.TypeMissMatch,
             },
@@ -453,8 +460,8 @@ pub const Literal = union(enum) {
 
     pub fn boolAnd(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Bool => |lv| switch (rhs) {
-                .Bool => |rv| return .{ .Bool = lv and rv },
+            .boolean => |lv| switch (rhs) {
+                .boolean => |rv| return .{ .boolean = lv and rv },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -463,8 +470,8 @@ pub const Literal = union(enum) {
 
     pub fn boolOr(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Bool => |lv| switch (rhs) {
-                .Bool => |rv| return .{ .Bool = lv or rv },
+            .boolean => |lv| switch (rhs) {
+                .boolean => |rv| return .{ .boolean = lv or rv },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -473,22 +480,22 @@ pub const Literal = union(enum) {
 
     pub fn cmpEqual(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Bool => |lv| switch (rhs) {
-                .Bool => |rv| return .{ .Bool = lv == rv },
+            .boolean => |lv| switch (rhs) {
+                .boolean => |rv| return .{ .boolean = lv == rv },
                 else => return error.TypeMissMatch,
             },
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| return .{ .Bool = lv == rv },
-                .Float => |rv| return .{ .Bool = @as(f64, @floatFromInt(lv)) == rv },
+            .int => |lv| switch (rhs) {
+                .int => |rv| return .{ .boolean = lv == rv },
+                .float => |rv| return .{ .boolean = @as(f64, @floatFromInt(lv)) == rv },
                 else => return error.TypeMissMatch,
             },
-            .Float => |lv| switch (rhs) {
-                .Float => |rv| return .{ .Bool = lv == rv },
-                .Int => |rv| return .{ .Bool = lv == @as(f64, @floatFromInt(rv)) },
+            .float => |lv| switch (rhs) {
+                .float => |rv| return .{ .boolean = lv == rv },
+                .int => |rv| return .{ .boolean = lv == @as(f64, @floatFromInt(rv)) },
                 else => return error.TypeMissMatch,
             },
-            .String => |lv| switch (rhs) {
-                .String => |rv| return .{ .Bool = mem.eql(u8, lv, rv) },
+            .string => |lv| switch (rhs) {
+                .string => |rv| return .{ .boolean = mem.eql(u8, lv, rv) },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -497,22 +504,22 @@ pub const Literal = union(enum) {
 
     pub fn cmpNotEqual(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Bool => |lv| switch (rhs) {
-                .Bool => |rv| return .{ .Bool = lv != rv },
+            .boolean => |lv| switch (rhs) {
+                .boolean => |rv| return .{ .boolean = lv != rv },
                 else => return error.TypeMissMatch,
             },
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| return .{ .Bool = lv != rv },
-                .Float => |rv| return .{ .Bool = @as(f64, @floatFromInt(lv)) != rv },
+            .int => |lv| switch (rhs) {
+                .int => |rv| return .{ .boolean = lv != rv },
+                .float => |rv| return .{ .boolean = @as(f64, @floatFromInt(lv)) != rv },
                 else => return error.TypeMissMatch,
             },
-            .Float => |lv| switch (rhs) {
-                .Float => |rv| return .{ .Bool = lv != rv },
-                .Int => |rv| return .{ .Bool = lv != @as(f64, @floatFromInt(rv)) },
+            .float => |lv| switch (rhs) {
+                .float => |rv| return .{ .boolean = lv != rv },
+                .int => |rv| return .{ .boolean = lv != @as(f64, @floatFromInt(rv)) },
                 else => return error.TypeMissMatch,
             },
-            .String => |lv| switch (rhs) {
-                .String => |rv| return .{ .Bool = !mem.eql(u8, lv, rv) },
+            .string => |lv| switch (rhs) {
+                .string => |rv| return .{ .boolean = !mem.eql(u8, lv, rv) },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -521,14 +528,14 @@ pub const Literal = union(enum) {
 
     pub fn cmpLess(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| return .{ .Bool = lv < rv },
-                .Float => |rv| return .{ .Bool = @as(f64, @floatFromInt(lv)) < rv },
+            .int => |lv| switch (rhs) {
+                .int => |rv| return .{ .boolean = lv < rv },
+                .float => |rv| return .{ .boolean = @as(f64, @floatFromInt(lv)) < rv },
                 else => return error.TypeMissMatch,
             },
-            .Float => |lv| switch (rhs) {
-                .Float => |rv| return .{ .Bool = lv < rv },
-                .Int => |rv| return .{ .Bool = lv < @as(f64, @floatFromInt(rv)) },
+            .float => |lv| switch (rhs) {
+                .float => |rv| return .{ .boolean = lv < rv },
+                .int => |rv| return .{ .boolean = lv < @as(f64, @floatFromInt(rv)) },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -537,14 +544,14 @@ pub const Literal = union(enum) {
 
     pub fn cmpLessEqual(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| return .{ .Bool = lv <= rv },
-                .Float => |rv| return .{ .Bool = @as(f64, @floatFromInt(lv)) <= rv },
+            .int => |lv| switch (rhs) {
+                .int => |rv| return .{ .boolean = lv <= rv },
+                .float => |rv| return .{ .boolean = @as(f64, @floatFromInt(lv)) <= rv },
                 else => return error.TypeMissMatch,
             },
-            .Float => |lv| switch (rhs) {
-                .Float => |rv| return .{ .Bool = lv <= rv },
-                .Int => |rv| return .{ .Bool = lv <= @as(f64, @floatFromInt(rv)) },
+            .float => |lv| switch (rhs) {
+                .float => |rv| return .{ .boolean = lv <= rv },
+                .int => |rv| return .{ .boolean = lv <= @as(f64, @floatFromInt(rv)) },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -553,14 +560,14 @@ pub const Literal = union(enum) {
 
     pub fn cmpGreater(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| return .{ .Bool = lv > rv },
-                .Float => |rv| return .{ .Bool = @as(f64, @floatFromInt(lv)) > rv },
+            .int => |lv| switch (rhs) {
+                .int => |rv| return .{ .boolean = lv > rv },
+                .float => |rv| return .{ .boolean = @as(f64, @floatFromInt(lv)) > rv },
                 else => return error.TypeMissMatch,
             },
-            .Float => |lv| switch (rhs) {
-                .Float => |rv| return .{ .Bool = lv > rv },
-                .Int => |rv| return .{ .Bool = lv > @as(f64, @floatFromInt(rv)) },
+            .float => |lv| switch (rhs) {
+                .float => |rv| return .{ .boolean = lv > rv },
+                .int => |rv| return .{ .boolean = lv > @as(f64, @floatFromInt(rv)) },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -569,14 +576,14 @@ pub const Literal = union(enum) {
 
     pub fn cmpGreaterEqual(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| return .{ .Bool = lv >= rv },
-                .Float => |rv| return .{ .Bool = @as(f64, @floatFromInt(lv)) >= rv },
+            .int => |lv| switch (rhs) {
+                .int => |rv| return .{ .boolean = lv >= rv },
+                .float => |rv| return .{ .boolean = @as(f64, @floatFromInt(lv)) >= rv },
                 else => return error.TypeMissMatch,
             },
-            .Float => |lv| switch (rhs) {
-                .Float => |rv| return .{ .Bool = lv >= rv },
-                .Int => |rv| return .{ .Bool = lv >= @as(f64, @floatFromInt(rv)) },
+            .float => |lv| switch (rhs) {
+                .float => |rv| return .{ .boolean = lv >= rv },
+                .int => |rv| return .{ .boolean = lv >= @as(f64, @floatFromInt(rv)) },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -585,14 +592,14 @@ pub const Literal = union(enum) {
 
     pub fn add(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| return .{ .Int = lv + rv },
-                .Float => |rv| return .{ .Float = @as(f64, @floatFromInt(lv)) + rv },
+            .int => |lv| switch (rhs) {
+                .int => |rv| return .{ .int = lv + rv },
+                .float => |rv| return .{ .float = @as(f64, @floatFromInt(lv)) + rv },
                 else => return error.TypeMissMatch,
             },
-            .Float => |lv| switch (rhs) {
-                .Float => |rv| return .{ .Float = lv + rv },
-                .Int => |rv| return .{ .Float = lv + @as(f64, @floatFromInt(rv)) },
+            .float => |lv| switch (rhs) {
+                .float => |rv| return .{ .float = lv + rv },
+                .int => |rv| return .{ .float = lv + @as(f64, @floatFromInt(rv)) },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -601,14 +608,14 @@ pub const Literal = union(enum) {
 
     pub fn subtract(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| return .{ .Int = lv - rv },
-                .Float => |rv| return .{ .Float = @as(f64, @floatFromInt(lv)) - rv },
+            .int => |lv| switch (rhs) {
+                .int => |rv| return .{ .int = lv -% rv },
+                .float => |rv| return .{ .float = @as(f64, @floatFromInt(lv)) - rv },
                 else => return error.TypeMissMatch,
             },
-            .Float => |lv| switch (rhs) {
-                .Float => |rv| return .{ .Float = lv - rv },
-                .Int => |rv| return .{ .Float = lv - @as(f64, @floatFromInt(rv)) },
+            .float => |lv| switch (rhs) {
+                .float => |rv| return .{ .float = lv - rv },
+                .int => |rv| return .{ .float = lv - @as(f64, @floatFromInt(rv)) },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -617,14 +624,14 @@ pub const Literal = union(enum) {
 
     pub fn multiply(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| return .{ .Int = lv * rv },
-                .Float => |rv| return .{ .Float = @as(f64, @floatFromInt(lv)) * rv },
+            .int => |lv| switch (rhs) {
+                .int => |rv| return .{ .int = lv *% rv },
+                .float => |rv| return .{ .float = @as(f64, @floatFromInt(lv)) * rv },
                 else => return error.TypeMissMatch,
             },
-            .Float => |lv| switch (rhs) {
-                .Float => |rv| return .{ .Float = lv * rv },
-                .Int => |rv| return .{ .Float = lv * @as(f64, @floatFromInt(rv)) },
+            .float => |lv| switch (rhs) {
+                .float => |rv| return .{ .float = lv * rv },
+                .int => |rv| return .{ .float = lv * @as(f64, @floatFromInt(rv)) },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -633,14 +640,14 @@ pub const Literal = union(enum) {
 
     pub fn divide(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| if (rv != 0) return .{ .Int = @divExact(lv, rv) } else return .{ .Int = 0 },
-                .Float => |rv| if (rv != 0.0) return .{ .Float = @as(f64, @floatFromInt(lv)) / rv } else return .{ .Float = 0.0 },
+            .int => |lv| switch (rhs) {
+                .int => |rv| if (rv != 0) return .{ .int = @divTrunc(lv, rv) } else return .{ .int = 0 },
+                .float => |rv| if (rv != 0.0) return .{ .float = @as(f64, @floatFromInt(lv)) / rv } else return .{ .float = 0.0 },
                 else => return error.TypeMissMatch,
             },
-            .Float => |lv| switch (rhs) {
-                .Float => |rv| if (rv != 0.0) return .{ .Float = lv / rv } else return .{ .Float = 0.0 },
-                .Int => |rv| if (rv != 0) return .{ .Float = lv / @as(f64, @floatFromInt(rv)) } else return .{ .Int = 0 },
+            .float => |lv| switch (rhs) {
+                .float => |rv| if (rv != 0.0) return .{ .float = lv / rv } else return .{ .float = 0.0 },
+                .int => |rv| if (rv != 0) return .{ .float = lv / @as(f64, @floatFromInt(rv)) } else return .{ .int = 0 },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -649,14 +656,14 @@ pub const Literal = union(enum) {
 
     pub fn remainder(lhs: Literal, rhs: Literal) OperationError!Literal {
         switch (lhs) {
-            .Int => |lv| switch (rhs) {
-                .Int => |rv| if (rv != 0) return .{ .Int = @rem(lv, rv) } else return .{ .Int = 0 },
-                .Float => |rv| if (rv != 0.0) return .{ .Float = @rem(@as(f64, @floatFromInt(lv)), rv) } else return .{ .Float = 0.0 },
+            .int => |lv| switch (rhs) {
+                .int => |rv| if (rv != 0) return .{ .int = @rem(lv, rv) } else return .{ .int = 0 },
+                .float => |rv| if (rv != 0.0) return .{ .float = @rem(@as(f64, @floatFromInt(lv)), rv) } else return .{ .float = 0.0 },
                 else => return error.TypeMissMatch,
             },
-            .Float => |lv| switch (rhs) {
-                .Float => |rv| if (rv != 0) return .{ .Float = @rem(lv, rv) } else return .{ .Float = 0.0 },
-                .Int => |rv| if (rv != 0) return .{ .Float = @rem(lv, @as(f64, @floatFromInt(rv))) } else return .{ .Float = 0.0 },
+            .float => |lv| switch (rhs) {
+                .float => |rv| if (rv != 0) return .{ .float = @rem(lv, rv) } else return .{ .float = 0.0 },
+                .int => |rv| if (rv != 0) return .{ .float = @rem(lv, @as(f64, @floatFromInt(rv))) } else return .{ .float = 0.0 },
                 else => return error.TypeMissMatch,
             },
             else => return error.TypeMissMatch,
@@ -671,9 +678,30 @@ pub const Token = struct {
     data: ?Literal,
 
     pub const empty: @This() = .{
-        .kind = .Eof,
+        .kind = .eof,
         .lexeme = "",
         .line = 1,
         .data = null,
     };
 };
+
+test Self {
+    const alloc = std.testing.allocator;
+    var lexer: Self = try .init(alloc,
+        \\/* Entry point */
+        \\fungsi utama() mulai
+        \\    cetak `Halo, dunia!`;
+        \\akhir
+    );
+    defer lexer.deinit();
+    try lexer.scan();
+
+    const tokens: []const Token = lexer.tokens.items;
+    for (tokens) |token| {
+        print("{any}\n", .{token});
+    }
+
+    try std.testing.expect(
+        tokens[tokens.len - 2].kind == .akhir,
+    );
+}

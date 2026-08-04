@@ -1,3 +1,5 @@
+//! This will act like a tiny calculator,
+//! just for fun experimental haha.
 const std = @import("std");
 const Lexer = @import("frontend/Lexer.zig");
 const Parser = @import("frontend/Parser.zig");
@@ -14,11 +16,7 @@ pub fn repl(io: std.Io, allocator: Allocator) !void {
         try stdout.writeStreamingAll(io, ">> ");
 
         var stackbuf: [64]u8 = @splat(0);
-        const readed = stdin.readStreaming(io, &.{&stackbuf}) catch |err| switch (err) {
-            error.EndOfStream => break,
-            else => @panic(@errorName(err)),
-        };
-
+        const readed = stdin.readStreaming(io, &.{&stackbuf}) catch break;
         try buffer.appendSlice(allocator, stackbuf[0 .. readed - 1]);
 
         if (stackbuf[readed - 1] == '\n') {
@@ -28,21 +26,21 @@ pub fn repl(io: std.Io, allocator: Allocator) !void {
             defer lexer.deinit();
             try lexer.scan();
 
-            var parser: Parser = try .init(allocator, lexer.tokens.items);
+            var parser: Parser = try .fromLexer(lexer);
             defer parser.deinit();
-            const expr = parser.parseExpr() catch |err| {
+            const expr_tree = parser.parseExpr() catch |err| {
                 std.log.err("{s}", .{@errorName(err)});
                 continue;
             };
 
-            const evaluated = expr.eval() catch |err| {
+            const expr = expr_tree.eval() catch |err| {
                 std.log.err("{s}", .{@errorName(err)});
                 continue;
             };
 
-            switch (evaluated) {
-                .Int, .Bool, .Float, .Nil => std.debug.print("{any}\n", .{evaluated}),
-                .String => std.debug.print(".{{ .String = `{s}` }}\n", .{evaluated.String}),
+            switch (expr) {
+                .int, .boolean, .float, .hampa => std.debug.print("{any}\n", .{expr}),
+                .string => std.debug.print(".{{ .String = `{s}` }}\n", .{expr.string}),
             }
         }
     }

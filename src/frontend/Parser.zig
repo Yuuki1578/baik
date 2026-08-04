@@ -14,7 +14,7 @@
 //! `UNARY`  : ( "-" | "!" | "~" ) `UNARY` | `PRIMARY`
 //! `PRIMARY`: `STRING` | `NUMBER` | `FLOAT` | "benar" | "salah" | "hampa" | "(" `EXPR` ")"
 const std = @import("std");
-const baik = @import("baik");
+const common = @import("../common.zig");
 const log = std.log;
 const ExprPool = std.heap.MemoryPool(Expr);
 const Allocator = std.mem.Allocator;
@@ -24,6 +24,11 @@ const Token = Lexer.Token;
 const Literal = Lexer.Literal;
 const OperationError = Lexer.Literal.OperationError;
 
+allocator: Allocator,
+expr_pool: ExprPool,
+tokens: []const Token,
+current: u64,
+
 const Self = @This();
 const ParsingError = error{
     UnexpectedToken,
@@ -32,13 +37,8 @@ const ParsingError = error{
 
 const ParseExprResult = ParsingError!*Expr;
 
-allocator: Allocator,
-expr_pool: ExprPool,
-tokens: []const Token,
-current: u64,
-
 pub fn init(allocator: Allocator, tokens: []const Token) !Self {
-    const prealloc_size = baik.determinePreallocSize(Token, tokens);
+    const prealloc_size = common.determinePreallocSize(Token, tokens);
     return .{
         .allocator = allocator,
         .expr_pool = try .initCapacity(allocator, prealloc_size),
@@ -47,26 +47,30 @@ pub fn init(allocator: Allocator, tokens: []const Token) !Self {
     };
 }
 
+pub fn fromLexer(lexer: Lexer) !Self {
+    return try .init(lexer.allocator, lexer.tokens.items);
+}
+
 pub fn deinit(self: *Self) void {
     self.expr_pool.deinit(self.allocator);
 }
 
-fn fallBackEof(self: *const Self) *const Token {
+fn fallBackEof(self: Self) *const Token {
     return &self.tokens[self.tokens.len - 1];
 }
 
 fn isDone(self: Self) bool {
-    return self.current >= self.tokens.len or self.tokens[self.current].kind == .Eof;
+    return self.current >= self.tokens.len or self.tokens[self.current].kind == .eof;
 }
 
-fn peek(self: *const Self) *const Token {
+fn peek(self: Self) *const Token {
     if (!self.isDone())
         return &self.tokens[self.current];
 
     return self.fallBackEof();
 }
 
-fn previous(self: *const Self) *const Token {
+fn previous(self: Self) *const Token {
     if (self.current > 0)
         return &self.tokens[self.current - 1];
 
@@ -81,7 +85,7 @@ fn next(self: *Self) *const Token {
     return self.fallBackEof();
 }
 
-fn validateToken(self: *const Self, kind: TokenKind) bool {
+fn validateToken(self: Self, kind: TokenKind) bool {
     if (self.peek().kind == kind)
         return true;
 
@@ -119,10 +123,10 @@ pub fn parseExpr(self: *Self) ParseExprResult {
 fn commaExpr(self: *Self) ParseExprResult {
     var lhs = try self.conditionExpr();
 
-    while (self.matchTokens(&.{.Comma})) {
+    while (self.matchTokens(&.{.comma})) {
         const operator = self.previous().kind;
         const rhs = try self.conditionExpr();
-        lhs = self.initExpr(.{ .Binary = .{
+        lhs = self.initExpr(.{ .binary = .{
             .operator = operator,
             .lhs = lhs,
             .rhs = rhs,
@@ -135,10 +139,10 @@ fn commaExpr(self: *Self) ParseExprResult {
 fn conditionExpr(self: *Self) ParseExprResult {
     var lhs = try self.equalityExpr();
 
-    while (self.matchTokens(&.{ .Dan, .Atau })) {
+    while (self.matchTokens(&.{ .dan, .atau })) {
         const operator = self.previous().kind;
         const rhs = try self.equalityExpr();
-        lhs = self.initExpr(.{ .Binary = .{
+        lhs = self.initExpr(.{ .binary = .{
             .operator = operator,
             .lhs = lhs,
             .rhs = rhs,
@@ -151,10 +155,10 @@ fn conditionExpr(self: *Self) ParseExprResult {
 fn equalityExpr(self: *Self) ParseExprResult {
     var lhs = try self.compareExpr();
 
-    while (self.matchTokens(&.{ .EqualEqual, .BangEqual })) {
+    while (self.matchTokens(&.{ .equal_equal, .bang_equal })) {
         const operator = self.previous().kind;
         const rhs = try self.compareExpr();
-        lhs = self.initExpr(.{ .Binary = .{
+        lhs = self.initExpr(.{ .binary = .{
             .operator = operator,
             .lhs = lhs,
             .rhs = rhs,
@@ -165,28 +169,12 @@ fn equalityExpr(self: *Self) ParseExprResult {
 }
 
 fn compareExpr(self: *Self) ParseExprResult {
-    var lhs = try self.bitMoveExpr();
-
-    while (self.matchTokens(&.{ .Less, .LessEqual, .Greater, .GreaterEqual })) {
-        const operator = self.previous().kind;
-        const rhs = try self.bitMoveExpr();
-        lhs = self.initExpr(.{ .Binary = .{
-            .operator = operator,
-            .lhs = lhs,
-            .rhs = rhs,
-        } });
-    }
-
-    return lhs;
-}
-
-fn bitMoveExpr(self: *Self) ParseExprResult {
     var lhs = try self.bitOpExpr();
 
-    while (self.matchTokens(&.{ .LessLess, .GreaterGreater })) {
+    while (self.matchTokens(&.{ .less, .less_equal, .greater, .greater_equal })) {
         const operator = self.previous().kind;
         const rhs = try self.bitOpExpr();
-        lhs = self.initExpr(.{ .Binary = .{
+        lhs = self.initExpr(.{ .binary = .{
             .operator = operator,
             .lhs = lhs,
             .rhs = rhs,
@@ -197,12 +185,28 @@ fn bitMoveExpr(self: *Self) ParseExprResult {
 }
 
 fn bitOpExpr(self: *Self) ParseExprResult {
+    var lhs = try self.bitMoveExpr();
+
+    while (self.matchTokens(&.{ .ampersand, .caret, .bar })) {
+        const operator = self.previous().kind;
+        const rhs = try self.bitMoveExpr();
+        lhs = self.initExpr(.{ .binary = .{
+            .operator = operator,
+            .lhs = lhs,
+            .rhs = rhs,
+        } });
+    }
+
+    return lhs;
+}
+
+fn bitMoveExpr(self: *Self) ParseExprResult {
     var lhs = try self.termExpr();
 
-    while (self.matchTokens(&.{ .Ampersand, .Caret, .Bar })) {
+    while (self.matchTokens(&.{ .less_less, .greater_greater })) {
         const operator = self.previous().kind;
         const rhs = try self.termExpr();
-        lhs = self.initExpr(.{ .Binary = .{
+        lhs = self.initExpr(.{ .binary = .{
             .operator = operator,
             .lhs = lhs,
             .rhs = rhs,
@@ -215,10 +219,10 @@ fn bitOpExpr(self: *Self) ParseExprResult {
 fn termExpr(self: *Self) ParseExprResult {
     var lhs = try self.factorExpr();
 
-    while (self.matchTokens(&.{ .Star, .Slash, .Percent })) {
+    while (self.matchTokens(&.{ .plus, .minus })) {
         const operator = self.previous().kind;
         const rhs = try self.factorExpr();
-        lhs = self.initExpr(.{ .Binary = .{
+        lhs = self.initExpr(.{ .binary = .{
             .operator = operator,
             .lhs = lhs,
             .rhs = rhs,
@@ -231,10 +235,10 @@ fn termExpr(self: *Self) ParseExprResult {
 fn factorExpr(self: *Self) ParseExprResult {
     var lhs = try self.unaryExpr();
 
-    while (self.matchTokens(&.{ .Plus, .Minus })) {
+    while (self.matchTokens(&.{ .slash, .star, .percent })) {
         const operator = self.previous().kind;
         const rhs = try self.unaryExpr();
-        lhs = self.initExpr(.{ .Binary = .{
+        lhs = self.initExpr(.{ .binary = .{
             .operator = operator,
             .lhs = lhs,
             .rhs = rhs,
@@ -245,11 +249,11 @@ fn factorExpr(self: *Self) ParseExprResult {
 }
 
 fn unaryExpr(self: *Self) ParseExprResult {
-    if (self.matchTokens(&.{ .Minus, .Bang, .Tilde })) {
+    if (self.matchTokens(&.{ .minus, .bang, .tilde })) {
         const operator = self.previous().kind;
         const primary = try self.unaryExpr();
         return self.initExpr(.{
-            .Unary = .{
+            .unary = .{
                 .operator = operator,
                 .expr = primary,
             },
@@ -261,21 +265,21 @@ fn unaryExpr(self: *Self) ParseExprResult {
 
 fn primaryExpr(self: *Self) ParseExprResult {
     if (self.matchTokens(&.{
-        .Benar,
-        .Salah,
-        .Int,
-        .Float,
-        .String,
-        .Hampa,
+        .benar,
+        .salah,
+        .int,
+        .float,
+        .string,
+        .hampa,
     })) {
         return self.initExpr(.{
-            .Primary = self.previous().data orelse return error.NotExpression,
+            .primary = self.previous().data orelse return error.NotExpression,
         });
     }
 
-    if (self.matchTokens(&.{.LeftParen})) {
+    if (self.matchTokens(&.{.left_paren})) {
         const inside = try self.parseExpr();
-        _ = try self.nextExpect(.RightParen, ")");
+        _ = try self.nextExpect(.right_paren, ")");
         return inside;
     }
 
@@ -289,13 +293,13 @@ fn initExpr(self: *Self, expr: Expr) *Expr {
 }
 
 pub const Expr = union(enum) {
-    Primary: Literal,
-    Group: *Expr,
-    Unary: struct {
+    primary: Literal,
+    group: *Expr,
+    unary: struct {
         operator: TokenKind,
         expr: *Expr,
     },
-    Binary: struct {
+    binary: struct {
         operator: TokenKind,
         lhs: *Expr,
         rhs: *Expr,
@@ -311,50 +315,50 @@ pub const Expr = union(enum) {
 
 fn eval(self: *Expr) Expr.EvalResult {
     switch (self.*) {
-        .Primary => return self.Primary,
-        .Group => return try eval(self),
-        .Unary => switch (try eval(self.Unary.expr)) {
-            .Bool => |expr| if (self.Unary.operator == .Bang)
-                return .{ .Bool = !expr }
+        .primary => return self.primary,
+        .group => return try eval(self),
+        .unary => switch (try eval(self.unary.expr)) {
+            .boolean => |expr| if (self.unary.operator == .bang)
+                return .{ .boolean = !expr }
             else
                 return error.WrongOperator,
 
-            .Int => |expr| switch (self.Unary.operator) {
-                .Minus => return .{ .Int = expr },
-                .Tilde => return .{ .Int = ~expr },
+            .int => |expr| switch (self.unary.operator) {
+                .minus => return .{ .int = -%expr }, // wrap around
+                .tilde => return .{ .int = ~expr },
                 else => return error.WrongOperator,
             },
 
-            .Float => |expr| if (self.Unary.operator == .Minus)
-                return .{ .Float = -expr }
+            .float => |expr| if (self.unary.operator == .minus)
+                return .{ .float = -expr }
             else
                 return error.WrongOperator,
 
             else => return error.TypeMissMatch,
         },
-        .Binary => |binary| {
+        .binary => |binary| {
             const lhs = try eval(binary.lhs);
             const rhs = try eval(binary.rhs);
             switch (binary.operator) {
-                .Plus => return lhs.add(rhs),
-                .Minus => return lhs.subtract(rhs),
-                .Star => return lhs.multiply(rhs),
-                .Slash => return lhs.divide(rhs),
-                .Percent => return lhs.remainder(rhs),
-                .Dan => return lhs.boolAnd(rhs),
-                .Atau => return lhs.boolOr(rhs),
-                .EqualEqual => return lhs.cmpEqual(rhs),
-                .BangEqual => return lhs.cmpNotEqual(rhs),
-                .Less => return lhs.cmpLess(rhs),
-                .LessEqual => return lhs.cmpLessEqual(rhs),
-                .Greater => return lhs.cmpGreater(rhs),
-                .GreaterEqual => return lhs.cmpGreaterEqual(rhs),
-                .Ampersand => return lhs.bitAnd(rhs),
-                .Bar => return lhs.bitOr(rhs),
-                .Caret => return lhs.bitXor(rhs),
-                .LessLess => return lhs.bitShiftLeft(rhs),
-                .GreaterGreater => return lhs.bitShiftRight(rhs),
-                .Comma => return rhs,
+                .plus => return lhs.add(rhs),
+                .minus => return lhs.subtract(rhs),
+                .star => return lhs.multiply(rhs),
+                .slash => return lhs.divide(rhs),
+                .percent => return lhs.remainder(rhs),
+                .dan => return lhs.boolAnd(rhs),
+                .atau => return lhs.boolOr(rhs),
+                .equal_equal => return lhs.cmpEqual(rhs),
+                .bang_equal => return lhs.cmpNotEqual(rhs),
+                .less => return lhs.cmpLess(rhs),
+                .less_equal => return lhs.cmpLessEqual(rhs),
+                .greater => return lhs.cmpGreater(rhs),
+                .greater_equal => return lhs.cmpGreaterEqual(rhs),
+                .ampersand => return lhs.bitAnd(rhs),
+                .bar => return lhs.bitOr(rhs),
+                .caret => return lhs.bitXor(rhs),
+                .less_less => return lhs.bitShiftLeft(rhs),
+                .greater_greater => return lhs.bitShiftRight(rhs),
+                .comma => return rhs,
                 else => unreachable,
             }
         },
