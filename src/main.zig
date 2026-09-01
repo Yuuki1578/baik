@@ -1,17 +1,20 @@
 const std = @import("std");
 const baik = @import("baik");
 const repl = @import("repl.zig");
-const Lexer = @import("frontend/Lexer.zig");
-const Parser = @import("frontend/Parser.zig");
+const log = std.log;
+const Lexer = @import("Lexer.zig");
+const Parser = @import("Parser.zig");
 const Init = std.process.Init;
-const print = std.debug.print;
 
-pub fn main(init: Init) void {
+pub fn main(init: Init) u8 {
+    var ret: u8 = 0;
     const io = init.io;
-    const gpa = init.gpa;
+    const alloc = init.gpa;
 
-    repl.repl(io, gpa) catch |err| {
-        print("{any}\n", .{err});
-        return;
+    repl.repl(io, alloc) catch |err| {
+        log.err("{any}\n", .{err});
+        ret = 1;
     };
+
+    return ret;
 }

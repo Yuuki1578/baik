@@ -14,7 +14,7 @@
 //! `UNARY`  : ( "-" | "!" | "~" ) `UNARY` | `PRIMARY`
 //! `PRIMARY`: `STRING` | `NUMBER` | `FLOAT` | "benar" | "salah" | "hampa" | "(" `EXPR` ")"
 const std = @import("std");
-const common = @import("../common.zig");
+const common = @import("common.zig");
 const log = std.log;
 const ExprPool = std.heap.MemoryPool(Expr);
 const Allocator = std.mem.Allocator;
@@ -27,7 +27,7 @@ const OperationError = Lexer.Literal.OperationError;
 allocator: Allocator,
 expr_pool: ExprPool,
 tokens: []const Token,
-current: u64,
+current: usize,
 
 const Self = @This();
 const ParsingError = error{
@@ -38,7 +38,7 @@ const ParsingError = error{
 const ParseExprResult = ParsingError!*Expr;
 
 pub fn init(allocator: Allocator, tokens: []const Token) !Self {
-    const prealloc_size = common.determinePreallocSize(Token, tokens);
+    const prealloc_size = common.preallocSize(tokens.len);
     return .{
         .allocator = allocator,
         .expr_pool = try .initCapacity(allocator, prealloc_size),
@@ -313,54 +313,54 @@ pub const Expr = union(enum) {
     pub const eval = Self.eval;
 };
 
-fn eval(self: *Expr) Expr.EvalResult {
-    switch (self.*) {
-        .primary => return self.primary,
-        .group => return try eval(self),
-        .unary => switch (try eval(self.unary.expr)) {
+fn eval(self: *Expr, a: Allocator) Expr.EvalResult {
+    return switch (self.*) {
+        .primary => self.primary,
+        .group => try eval(self, a),
+        .unary => switch (try eval(self.unary.expr, a)) {
             .boolean => |expr| if (self.unary.operator == .bang)
-                return .{ .boolean = !expr }
+                .{ .boolean = !expr }
             else
-                return error.WrongOperator,
+                error.WrongOperator,
 
             .int => |expr| switch (self.unary.operator) {
-                .minus => return .{ .int = -%expr }, // wrap around
-                .tilde => return .{ .int = ~expr },
-                else => return error.WrongOperator,
+                .minus => .{ .int = -%expr }, // wrap around
+                .tilde => .{ .int = ~expr },
+                else => error.WrongOperator,
             },
 
             .float => |expr| if (self.unary.operator == .minus)
-                return .{ .float = -expr }
+                .{ .float = -expr }
             else
-                return error.WrongOperator,
+                error.WrongOperator,
 
-            else => return error.TypeMissMatch,
+            else => error.TypeMissMatch,
         },
-        .binary => |binary| {
-            const lhs = try eval(binary.lhs);
-            const rhs = try eval(binary.rhs);
-            switch (binary.operator) {
-                .plus => return lhs.add(rhs),
-                .minus => return lhs.subtract(rhs),
-                .star => return lhs.multiply(rhs),
-                .slash => return lhs.divide(rhs),
-                .percent => return lhs.remainder(rhs),
-                .dan => return lhs.boolAnd(rhs),
-                .atau => return lhs.boolOr(rhs),
-                .equal_equal => return lhs.cmpEqual(rhs),
-                .bang_equal => return lhs.cmpNotEqual(rhs),
-                .less => return lhs.cmpLess(rhs),
-                .less_equal => return lhs.cmpLessEqual(rhs),
-                .greater => return lhs.cmpGreater(rhs),
-                .greater_equal => return lhs.cmpGreaterEqual(rhs),
-                .ampersand => return lhs.bitAnd(rhs),
-                .bar => return lhs.bitOr(rhs),
-                .caret => return lhs.bitXor(rhs),
-                .less_less => return lhs.bitShiftLeft(rhs),
-                .greater_greater => return lhs.bitShiftRight(rhs),
-                .comma => return rhs,
+        .binary => |binary| blk: {
+            const lhs = try eval(binary.lhs, a);
+            const rhs = try eval(binary.rhs, a);
+            break :blk switch (binary.operator) {
+                .plus => lhs.add(rhs),
+                .minus => lhs.subtract(rhs),
+                .star => lhs.multiply(rhs),
+                .slash => lhs.divide(rhs),
+                .percent => lhs.remainder(rhs),
+                .dan => lhs.boolAnd(rhs),
+                .atau => lhs.boolOr(rhs),
+                .equal_equal => lhs.cmpEqual(rhs, a),
+                .bang_equal => lhs.cmpNotEqual(rhs, a),
+                .less => lhs.cmpLess(rhs),
+                .less_equal => lhs.cmpLessEqual(rhs),
+                .greater => lhs.cmpGreater(rhs),
+                .greater_equal => lhs.cmpGreaterEqual(rhs),
+                .ampersand => lhs.bitAnd(rhs),
+                .bar => lhs.bitOr(rhs),
+                .caret => lhs.bitXor(rhs),
+                .less_less => lhs.bitShiftLeft(rhs),
+                .greater_greater => lhs.bitShiftRight(rhs),
+                .comma => rhs,
                 else => unreachable,
-            }
+            };
         },
-    }
+    };
 }
