@@ -1,6 +1,6 @@
-pub mod lexer;
-pub mod literal;
-pub mod parser;
+mod lexer;
+mod literal;
+mod parser;
 
 use crate::lexer::{Lexer, Literal};
 use crate::parser::Parser;
@@ -17,7 +17,7 @@ fn main() -> Result<(), usize> {
     lexer.scan();
     let tokens = lexer.as_tokens()?;
 
-    let mut parser = Parser::new(tokens);
+    let mut parser = Parser::from(tokens);
     let data = match parser.expr() {
         Ok(expr) => match expr.eval() {
             Ok(data) => data,

@@ -25,13 +25,12 @@ pub enum Expr<'a> {
 pub enum ParsingError {
     UnexpectedToken,
     NotExpression,
-    Eof,
 }
 
 pub type ParseExprResult<'a> = Result<Box<Expr<'a>>, ParsingError>;
 
 impl<'a> Parser<'a> {
-    pub fn new(tokens: &'a [Token<'a>]) -> Self {
+    pub fn from(tokens: &'a [Token<'a>]) -> Self {
         Self { tokens, now: 0 }
     }
 
@@ -96,8 +95,8 @@ impl<'a> Parser<'a> {
         let peek = self.peek();
 
         eprintln!(
-            "[ERROR] (line {}): Expected {:#?}, found {:#?}",
-            peek.line, expect, peek.kind
+            "[ERROR] (line {}): Expected {:#?}, found {:#?} in \"{}\"",
+            peek.line, expect, peek.kind, peek.lexeme,
         );
 
         Err(ParsingError::UnexpectedToken)
@@ -214,7 +213,7 @@ impl<'a> Parser<'a> {
             let data = self.previous().data.ok_or(ParsingError::NotExpression)?;
             return Ok(Box::new(Expr::Primary(data)));
         } else if self.find_matches([TokenKind::LeftParen]) {
-            let data = self.primary_expr()?;
+            let data = self.expr()?;
             match self.strict_next(TokenKind::RightParen) {
                 Ok(_) => return Ok(Box::new(Expr::Group(data))),
                 Err(err) => return Err(err),
@@ -229,18 +228,14 @@ impl<'a> Expr<'a> {
         match self {
             Self::Primary(data) => Ok(data),
             Self::Group(expr) => expr.eval(),
-            Self::Unary(kind, expr) => match (kind, expr.eval()?) {
+            Self::Unary(operator, expr) => match (operator, expr.eval()?) {
                 (TokenKind::Minus, Literal::Int(num)) => Ok(Literal::Int(-num)),
                 (TokenKind::Tilde, Literal::Int(num)) => Ok(Literal::Int(!num)),
                 (TokenKind::Minus, Literal::Float(num)) => Ok(Literal::Float(-num)),
                 (TokenKind::Bang, Literal::Bool(state)) => Ok(Literal::Bool(!state)),
                 _ => Err(OperationError::WrongOperator),
             },
-            Self::Binary {
-                operator: op,
-                lhs,
-                rhs,
-            } => match (op, lhs.eval()?, rhs.eval()?) {
+            Self::Binary { operator, lhs, rhs } => match (operator, lhs.eval()?, rhs.eval()?) {
                 (TokenKind::Plus, lhs, rhs) => lhs.add(rhs),
                 (TokenKind::Minus, lhs, rhs) => lhs.sub(rhs),
                 (TokenKind::Star, lhs, rhs) => lhs.mul(rhs),
