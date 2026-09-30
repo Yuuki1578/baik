@@ -1,5 +1,17 @@
-use StringLiteral::*;
+pub use crate::literal::Literal;
 use std::collections::HashMap;
+
+macro_rules! report {
+    ($lexer:expr, $fmt:expr) => {{
+        eprintln!(concat!("[ERROR] (line {}): ", $fmt), $lexer.line);
+        $lexer.error += 1;
+    }};
+
+    ($lexer:expr, $fmt:expr, $($arg:expr),* $(,)?) => {{
+        eprintln!(concat!("[ERROR] (line {}): ", $fmt), $lexer.line, $($arg),*);
+        $lexer.error += 1;
+    }};
+}
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum TokenKind {
@@ -33,90 +45,82 @@ pub enum TokenKind {
     LessEqual,
 
     Ident,
+    RawString,
+
     String,
     Int,
     Float,
 
-    Hampa,
-    Salah,
     Benar,
+    Salah,
+    Hampa,
+
     Dan,
-    Tipe,
-    Lain,
-    Fungsi,
-    Untuk,
-    Jika,
     Atau,
-    Cetak,
-    Kembali,
+
+    Variabel,
+    Fungsi,
+    Tipe,
     Induk,
     Ini,
-    Variabel,
+
+    Jika,
+    Lain,
     Selama,
+    Untuk,
+    Kembali,
+    Berhenti,
+    Cetak,
 
     Eof,
 }
 
-/// Represent 2 kind of string, `Normal` and `Raw`.
-/// `Raw` string begin with backtick and it can't contains escape sequence,
-/// while `Normal` don't.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum StringLiteral<'a> {
-    Normal(&'a [u8]),
-    Raw(&'a [u8]),
-}
-
-/// Immediate data for number, string, boolean and none.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Literal<'a> {
-    Int(i64),
-    Float(f64),
-    Bool(bool),
-    String(StringLiteral<'a>),
-    Nil,
-}
-
 /// Single token contains identity of a lexeme.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Token<'a> {
     pub lexeme: &'a str,
     pub kind: TokenKind,
-    pub line: usize,
+    pub line: u32,
     pub data: Option<Literal<'a>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Lexer<'a, 'b> {
+pub struct Lexer<'a> {
     src: &'a [u8],
     result: Vec<Token<'a>>,
-    error: usize,
-    kw_table: HashMap<&'b [u8], TokenKind>,
+    kw_table: HashMap<&'static [u8], TokenKind>,
 
     start: usize,
     now: usize,
-    line: usize,
+    line: u32,
+    error: u32,
 }
 
 // 'b : 'static (auto)
-impl<'a, 'b> Lexer<'a, 'b> {
+impl<'a> Lexer<'a> {
     pub fn new(src: &'a [u8]) -> Self {
-        let kw_table: HashMap<&'b [u8], TokenKind> = HashMap::from([
-            ("dan".as_bytes(), TokenKind::Dan),
-            ("tipe".as_bytes(), TokenKind::Tipe),
-            ("lain".as_bytes(), TokenKind::Lain),
+        let kw_table: HashMap<&'static [u8], TokenKind> = HashMap::from([
+            // Expr
+            ("benar".as_bytes(), TokenKind::Benar),
             ("salah".as_bytes(), TokenKind::Salah),
+            ("hampa".as_bytes(), TokenKind::Hampa),
+            // Flow
+            ("dan".as_bytes(), TokenKind::Dan),
+            ("atau".as_bytes(), TokenKind::Atau),
+            // Declaration
+            ("variabel".as_bytes(), TokenKind::Variabel),
             ("fungsi".as_bytes(), TokenKind::Fungsi),
+            ("tipe".as_bytes(), TokenKind::Tipe),
+            ("cetak".as_bytes(), TokenKind::Cetak),
+            ("induk".as_bytes(), TokenKind::Induk),
+            ("ini".as_bytes(), TokenKind::Ini),
+            // Control
+            ("lain".as_bytes(), TokenKind::Lain),
             ("untuk".as_bytes(), TokenKind::Untuk),
             ("jika".as_bytes(), TokenKind::Jika),
-            ("hampa".as_bytes(), TokenKind::Hampa),
-            ("atau".as_bytes(), TokenKind::Atau),
-            ("cetak".as_bytes(), TokenKind::Cetak),
             ("kembali".as_bytes(), TokenKind::Kembali),
-            ("indux".as_bytes(), TokenKind::Induk),
-            ("ini".as_bytes(), TokenKind::Ini),
-            ("benar".as_bytes(), TokenKind::Benar),
-            ("variabel".as_bytes(), TokenKind::Variabel),
             ("selama".as_bytes(), TokenKind::Selama),
+            ("berhenti".as_bytes(), TokenKind::Berhenti),
         ]);
 
         Self {
@@ -128,11 +132,6 @@ impl<'a, 'b> Lexer<'a, 'b> {
             start: 0,
             now: 0,
         }
-    }
-
-    fn report(&mut self, msg: &str) {
-        eprintln!("[ERROR] (line {}): {msg}", self.line);
-        self.error += 1;
     }
 
     fn is_done(&self) -> bool {
@@ -209,23 +208,24 @@ impl<'a, 'b> Lexer<'a, 'b> {
     }
 
     fn comment(&mut self) {
-        match self.peek() {
-            b'/' => while self.next() != b'\n' {},
-            b'*' => {
-                while !self.is_done() {
-                    match self.peek() {
-                        b'*' if self.peek_next() == b'/' => {
-                            self.next();
-                            self.next();
-                            return;
-                        }
-                        b'\n' => self.line += 1,
-                        _ => {}
+        if self.matches(b'/') {
+            while self.next() != b'\n' {}
+            return;
+        } else if self.matches(b'*') {
+            while !self.is_done() {
+                match (self.peek(), self.peek_next()) {
+                    (b'*', b'/') => {
+                        (self.next(), self.next());
+                        return;
                     }
-                    self.next();
+                    (b'\n', _) => self.line += 1,
+                    _ => {}
                 }
+                self.next();
             }
-            _ => self.push(TokenKind::Slash, None),
+            report!(self, "Missing '*/' in multiline comment");
+        } else {
+            self.push(TokenKind::Slash, None);
         }
     }
 
@@ -242,9 +242,10 @@ impl<'a, 'b> Lexer<'a, 'b> {
 
         while !self.is_done() {
             match self.peek() {
-                b'\n' | b'\t' | b'\r' => {
-                    self.report(
-                        "Cannot use '\\n', '\\t', or '\\r' directly, use escape sequence instead",
+                b'\x07' | b'\x08' | b'\x0C' | b'\n' | b'\r' | b'\x0B' => {
+                    report!(
+                        self,
+                        "Cannot use '\\a'..'\\v' directly inside string, use escape sequence instead",
                     );
                     return;
                 }
@@ -252,7 +253,6 @@ impl<'a, 'b> Lexer<'a, 'b> {
                 b'"' if !escaped => {
                     self.next();
                     let lexeme = Self::remove_quote(self.lexeme());
-                    let lexeme = StringLiteral::Normal(lexeme);
                     self.push(TokenKind::String, Some(Literal::String(lexeme)));
                     return;
                 }
@@ -264,14 +264,14 @@ impl<'a, 'b> Lexer<'a, 'b> {
                     escaped = false
                 }
                 other if escaped => {
-                    self.report(&format!("Unknown escape sequence of '\\{other}'"));
+                    report!(self, "Unknown escape sequence of '\\{}'", other);
                     escaped = false;
                 }
                 _ => {}
             }
             self.next();
         }
-        self.report("Missing double quote '\"'");
+        report!(self, "Missing double quote '\"'");
     }
 
     fn raw_string(&mut self) {
@@ -281,8 +281,7 @@ impl<'a, 'b> Lexer<'a, 'b> {
                     self.next();
                     let lexeme = self.lexeme();
                     let lexeme = Self::remove_quote(lexeme);
-                    let lexeme = StringLiteral::Raw(lexeme);
-                    self.push(TokenKind::String, Some(Literal::String(lexeme)));
+                    self.push(TokenKind::RawString, Some(Literal::String(lexeme)));
                     return;
                 }
 
@@ -291,7 +290,7 @@ impl<'a, 'b> Lexer<'a, 'b> {
             }
             self.next();
         }
-        self.report("Missing backtick quote '`'");
+        report!(self, "Missing backtick quote '`'");
     }
 
     fn prefixed_digit(&mut self) {
@@ -328,8 +327,7 @@ impl<'a, 'b> Lexer<'a, 'b> {
         let literal = Literal::Int(match i64::from_str_radix(lexeme, base) {
             Ok(num) => num,
             Err(err) => {
-                let msg = format!(r#"Parse int failed: ({err:?}) in "{lexeme}""#);
-                self.report(&msg);
+                report!(self, r#"Parse int failed: ({:?}) in "{}""#, err, lexeme);
                 0
             }
         });
@@ -360,7 +358,7 @@ impl<'a, 'b> Lexer<'a, 'b> {
                 Literal::Float(match lexeme.parse() {
                     Ok(num) => num,
                     Err(err) => {
-                        self.report(&format!(r#"Parse float failed: ({err:?}) in "{lexeme}""#));
+                        report!(self, r#"Parse float failed: ({:?}) in "{}""#, err, lexeme);
                         0.0
                     }
                 }),
@@ -371,7 +369,7 @@ impl<'a, 'b> Lexer<'a, 'b> {
                 Literal::Int(match lexeme.parse() {
                     Ok(num) => num,
                     Err(err) => {
-                        self.report(&format!(r#"Parse int failed: ({err:?}) in "{lexeme}""#));
+                        report!(self, r#"Parse int failed: ({:?}) in "{}""#, err, lexeme);
                         0
                     }
                 }),
@@ -395,7 +393,7 @@ impl<'a, 'b> Lexer<'a, 'b> {
             Some(kw) => match *kw {
                 TokenKind::Benar => (*kw, Some(Literal::Bool(true))),
                 TokenKind::Salah => (*kw, Some(Literal::Bool(false))),
-                TokenKind::Hampa => (*kw, Some(Literal::Nil)),
+                TokenKind::Hampa => (*kw, Some(Literal::Hampa)),
                 _ => (*kw, None),
             },
             None => (TokenKind::Ident, Option::<Literal<'a>>::None),
@@ -448,7 +446,7 @@ impl<'a, 'b> Lexer<'a, 'b> {
             b'0'..=b'9' => self.digit(ch),
 
             other if other.is_ascii_alphanumeric() || other == b'_' => self.keyword_ident(),
-            other => self.report(&format!("Unknown character {other}")),
+            other => report!(self, "Unknown character '{}'", other as char),
         }
     }
 
@@ -460,60 +458,10 @@ impl<'a, 'b> Lexer<'a, 'b> {
         self.push(TokenKind::Eof, None);
     }
 
-    pub fn as_tokens(&self) -> Result<&[Token<'a>], usize> {
+    pub fn as_tokens(self) -> Result<Vec<Token<'a>>, u32> {
         match self.error {
-            0 => Ok(self.result.as_slice()),
+            0 => Ok(self.result),
             too_many_err => Err(too_many_err),
         }
-    }
-}
-
-impl<'a> StringLiteral<'a> {
-    pub fn to_string(self) -> Option<String> {
-        let string = match self {
-            Normal(s) if s.len() > 0 => s,
-            Raw(s) if s.len() > 0 => return String::from_utf8(s.to_vec()).ok(),
-            _ => return None,
-        };
-
-        let mut buf = String::with_capacity(string.len());
-        let mut escaped = false;
-
-        for ch in string {
-            let ch = match ch {
-                b'\\' if escaped => {
-                    escaped = false;
-                    *ch
-                }
-
-                b'\\' => {
-                    escaped = true;
-                    continue;
-                }
-
-                b'a' | b'b' | b'f' | b't' | b'n' | b'v' | b'r' if !escaped => *ch,
-                b'"' | b'\'' | b'a' | b'b' | b'f' | b't' | b'n' | b'v' | b'r' if escaped => {
-                    escaped = false;
-                    match ch {
-                        b'"' => b'"',
-                        b'\'' => b'\'',
-                        b'a' => b'\x07',
-                        b'b' => b'\x08',
-                        b'f' => b'\x0c',
-                        b't' => b'\t',
-                        b'n' => b'\n',
-                        b'v' => b'\x0b',
-                        b'r' => b'\r',
-                        _ => unreachable!(),
-                    }
-                }
-                other => *other,
-            };
-
-            buf.push(ch as char);
-        }
-
-        buf.shrink_to_fit();
-        Some(buf)
     }
 }

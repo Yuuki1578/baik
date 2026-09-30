@@ -2,43 +2,33 @@ mod lexer;
 mod literal;
 mod parser;
 
-use crate::lexer::{Lexer, Literal};
-use crate::parser::Parser;
-use std::fs;
-use std::process;
-use std::time::Instant;
+use crate::{lexer::Lexer, parser::Parser};
+use std::{env, fs, process};
 
-fn main() -> Result<(), usize> {
-    let tm_begin = Instant::now();
-    let buf = fs::read_to_string("./example.baik").unwrap();
-    let src = buf.as_bytes();
-    let mut lexer = Lexer::new(src);
-
-    lexer.scan();
-    let tokens = lexer.as_tokens()?;
-
-    let mut parser = Parser::from(tokens);
-    let data = match parser.expr() {
-        Ok(expr) => match expr.eval() {
-            Ok(data) => data,
-            Err(err) => {
-                eprintln!("ERROR: {err:?}");
-                process::exit(1);
-            }
-        },
-        Err(err) => {
-            eprintln!("ERROR: {err:?}");
-            process::exit(2);
-        }
+fn read_file() -> String {
+    let path = match env::args().enumerate().find(|(idx, _)| *idx == 1) {
+        Some((_, path)) => path,
+        _ => process::exit(1),
     };
+    fs::read_to_string(path).unwrap_or_else(|err| {
+        eprintln!("Error: {err}");
+        Default::default()
+    })
+}
 
-    match data {
-        Literal::String(s) => println!("{:?}", s.to_string()),
-        other => println!("{other:?}"),
+fn main() {
+    let buf = read_file();
+    let mut lexer = Lexer::new(buf.as_bytes());
+    lexer.scan();
+
+    let tokens = lexer.as_tokens().unwrap();
+    for token in &tokens {
+        println!("{token:?} => {:?}", token.data);
     }
 
-    let elapsed = Instant::now() - tm_begin;
-    println!("Completed in {} sec", elapsed.as_secs_f32());
+    let mut parser = Parser::from(&tokens);
+    let expr = parser.expr().unwrap();
+    let expr = expr.eval().unwrap();
 
-    Ok(())
+    println!("{expr:?}");
 }

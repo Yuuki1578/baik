@@ -3,6 +3,16 @@ use crate::{
     literal::OperationError,
 };
 
+#[macro_export]
+macro_rules! parse_error {
+    ($kind:expr, $fmt:expr, $($arg:expr),* $(,)?) => {
+        ParseError {
+            msg: format!($fmt, $($arg),*),
+            kind: $kind,
+        }
+    };
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Parser<'a> {
     tokens: &'a [Token<'a>],
@@ -21,13 +31,25 @@ pub enum Expr<'a> {
     },
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ParseError {
+    msg: String,
+    pub kind: ParseErrorKind,
+}
+
+impl ParseError {
+    pub fn what(&self) -> &str {
+        &self.msg
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum ParsingError {
+pub enum ParseErrorKind {
     UnexpectedToken,
     NotExpression,
 }
 
-pub type ParseExprResult<'a> = Result<Box<Expr<'a>>, ParsingError>;
+pub type ParseExprResult<'a> = Result<Box<Expr<'a>>, ParseError>;
 
 impl<'a> Parser<'a> {
     pub fn from(tokens: &'a [Token<'a>]) -> Self {
@@ -87,7 +109,7 @@ impl<'a> Parser<'a> {
         false
     }
 
-    fn strict_next(&mut self, expect: TokenKind) -> Result<&'a Token<'a>, ParsingError> {
+    fn strict_next(&mut self, expect: TokenKind) -> Result<&'a Token<'a>, ParseErrorKind> {
         if self.is_matches(expect) {
             return Ok(self.next());
         }
@@ -99,7 +121,7 @@ impl<'a> Parser<'a> {
             peek.line, expect, peek.kind, peek.lexeme,
         );
 
-        Err(ParsingError::UnexpectedToken)
+        Err(ParseErrorKind::UnexpectedToken)
     }
 
     pub fn expr(&mut self) -> ParseExprResult<'a> {
@@ -210,7 +232,7 @@ impl<'a> Parser<'a> {
             TokenKind::Salah,
             TokenKind::Hampa,
         ]) {
-            let data = self.previous().data.ok_or(ParsingError::NotExpression)?;
+            let data = self.previous().data.ok_or(ParseErrorKind::NotExpression)?;
             return Ok(Box::new(Expr::Primary(data)));
         } else if self.find_matches([TokenKind::LeftParen]) {
             let data = self.expr()?;
@@ -219,7 +241,7 @@ impl<'a> Parser<'a> {
                 Err(err) => return Err(err),
             }
         }
-        Err(ParsingError::NotExpression)
+        Err(ParseErrorKind::NotExpression)
     }
 }
 

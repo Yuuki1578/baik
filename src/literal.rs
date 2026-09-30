@@ -1,6 +1,12 @@
-use crate::lexer::Literal;
-use std::error::Error;
-type L<'a> = Literal<'a>;
+/// Immediate data for number, string, boolean and none.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Literal<'a> {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(&'a [u8]),
+    Hampa,
+}
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum OperationError {
@@ -8,177 +14,126 @@ pub enum OperationError {
     WrongOperator,
 }
 
-impl std::fmt::Display for OperationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl Error for OperationError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        None
-    }
-
-    fn description(&self) -> &str {
-        match self {
-            Self::TypeMissmatch => "The types that being operated on isn't matches or ambigous",
-            Self::WrongOperator => "The current operator is ambigous to the current expression",
-        }
-    }
-
-    fn cause(&self) -> Option<&dyn Error> {
-        None
-    }
-}
-
 impl<'a> Literal<'a> {
     pub fn add(self, rhs: Self) -> Result<Self, OperationError> {
         Ok(match (self, rhs) {
-            (L::Int(lhs), L::Int(rhs)) => L::Int(lhs + rhs),
-            (L::Float(lhs), L::Float(rhs)) => L::Float(lhs + rhs),
-            (L::Int(lhs), L::Float(rhs)) => L::Float(lhs as f64 + rhs),
-            (L::Float(lhs), L::Int(rhs)) => L::Float(lhs + rhs as f64),
+            (Self::Int(lhs), Self::Int(rhs)) => Self::Int(lhs + rhs),
+            (Self::Float(lhs), Self::Float(rhs)) => Self::Float(lhs + rhs),
+            (Self::Int(lhs), Self::Float(rhs)) => Self::Float(lhs as f64 + rhs),
+            (Self::Float(lhs), Self::Int(rhs)) => Self::Float(lhs + rhs as f64),
             _ => return Err(OperationError::TypeMissmatch),
         })
     }
 
     pub fn sub(self, rhs: Self) -> Result<Self, OperationError> {
         Ok(match (self, rhs) {
-            (L::Int(lhs), L::Int(rhs)) => L::Int(lhs - rhs),
-            (L::Float(lhs), L::Float(rhs)) => L::Float(lhs - rhs),
-            (L::Int(lhs), L::Float(rhs)) => L::Float(lhs as f64 - rhs),
-            (L::Float(lhs), L::Int(rhs)) => L::Float(lhs - rhs as f64),
+            (Self::Int(lhs), Self::Int(rhs)) => Self::Int(lhs - rhs),
+            (Self::Float(lhs), Self::Float(rhs)) => Self::Float(lhs - rhs),
+            (Self::Int(lhs), Self::Float(rhs)) => Self::Float(lhs as f64 - rhs),
+            (Self::Float(lhs), Self::Int(rhs)) => Self::Float(lhs - rhs as f64),
             _ => return Err(OperationError::TypeMissmatch),
         })
     }
 
     pub fn mul(self, rhs: Self) -> Result<Self, OperationError> {
         Ok(match (self, rhs) {
-            (L::Int(lhs), L::Int(rhs)) => L::Int(lhs * rhs),
-            (L::Float(lhs), L::Float(rhs)) => L::Float(lhs * rhs),
-            (L::Int(lhs), L::Float(rhs)) => L::Float(lhs as f64 * rhs),
-            (L::Float(lhs), L::Int(rhs)) => L::Float(lhs * rhs as f64),
+            (Self::Int(lhs), Self::Int(rhs)) => Self::Int(lhs * rhs),
+            (Self::Float(lhs), Self::Float(rhs)) => Self::Float(lhs * rhs),
+            (Self::Int(lhs), Self::Float(rhs)) => Self::Float(lhs as f64 * rhs),
+            (Self::Float(lhs), Self::Int(rhs)) => Self::Float(lhs * rhs as f64),
             _ => return Err(OperationError::TypeMissmatch),
         })
     }
 
     pub fn div(self, rhs: Self) -> Result<Self, OperationError> {
         Ok(match (self, rhs) {
-            (L::Int(lhs), L::Int(rhs)) => L::Int(lhs / rhs),
-            (L::Float(lhs), L::Float(rhs)) => L::Float(lhs / rhs),
-            (L::Int(lhs), L::Float(rhs)) => L::Float(lhs as f64 / rhs),
-            (L::Float(lhs), L::Int(rhs)) => L::Float(lhs / rhs as f64),
+            (Self::Int(lhs), Self::Int(rhs)) => Self::Int(lhs / rhs),
+            (Self::Float(lhs), Self::Float(rhs)) => Self::Float(lhs / rhs),
+            (Self::Int(lhs), Self::Float(rhs)) => Self::Float(lhs as f64 / rhs),
+            (Self::Float(lhs), Self::Int(rhs)) => Self::Float(lhs / rhs as f64),
             _ => return Err(OperationError::TypeMissmatch),
         })
     }
 
     pub fn rem(self, rhs: Self) -> Result<Self, OperationError> {
         Ok(match (self, rhs) {
-            (L::Int(lhs), L::Int(rhs)) => L::Int(lhs % rhs),
-            (L::Float(lhs), L::Float(rhs)) => L::Float(lhs % rhs),
-            (L::Int(lhs), L::Float(rhs)) => L::Float(lhs as f64 % rhs),
-            (L::Float(lhs), L::Int(rhs)) => L::Float(lhs % rhs as f64),
+            (Self::Int(lhs), Self::Int(rhs)) => Self::Int(lhs % rhs),
+            (Self::Float(lhs), Self::Float(rhs)) => Self::Float(lhs % rhs),
+            (Self::Int(lhs), Self::Float(rhs)) => Self::Float(lhs as f64 % rhs),
+            (Self::Float(lhs), Self::Int(rhs)) => Self::Float(lhs % rhs as f64),
             _ => return Err(OperationError::TypeMissmatch),
         })
     }
 
     pub fn bit_and(self, rhs: Self) -> Result<Self, OperationError> {
         Ok(match (self, rhs) {
-            (L::Int(lhs), L::Int(rhs)) => L::Int(lhs & rhs),
+            (Self::Int(lhs), Self::Int(rhs)) => Self::Int(lhs & rhs),
             _ => return Err(OperationError::TypeMissmatch),
         })
     }
 
     pub fn bit_or(self, rhs: Self) -> Result<Self, OperationError> {
         Ok(match (self, rhs) {
-            (L::Int(lhs), L::Int(rhs)) => L::Int(lhs | rhs),
+            (Self::Int(lhs), Self::Int(rhs)) => Self::Int(lhs | rhs),
             _ => return Err(OperationError::TypeMissmatch),
         })
     }
 
     pub fn bit_xor(self, rhs: Self) -> Result<Self, OperationError> {
         Ok(match (self, rhs) {
-            (L::Int(lhs), L::Int(rhs)) => L::Int(lhs ^ rhs),
-            _ => return Err(OperationError::TypeMissmatch),
-        })
-    }
-
-    pub fn bin_and(self, rhs: Self) -> Result<Self, OperationError> {
-        Ok(match (self, rhs) {
-            (L::Bool(lhs), L::Bool(rhs)) => L::Bool(lhs && rhs),
-            _ => return Err(OperationError::TypeMissmatch),
-        })
-    }
-
-    pub fn bin_or(self, rhs: Self) -> Result<Self, OperationError> {
-        Ok(match (self, rhs) {
-            (L::Bool(lhs), L::Bool(rhs)) => L::Bool(lhs || rhs),
-            _ => return Err(OperationError::TypeMissmatch),
-        })
-    }
-
-    pub fn bin_not(self) -> Result<Self, OperationError> {
-        Ok(match self {
-            L::Bool(expr) => L::Bool(!expr),
+            (Self::Int(lhs), Self::Int(rhs)) => Self::Int(lhs ^ rhs),
             _ => return Err(OperationError::TypeMissmatch),
         })
     }
 
     pub fn shift_left(self, rhs: Self) -> Result<Self, OperationError> {
         Ok(match (self, rhs) {
-            (L::Int(lhs), L::Int(rhs)) => L::Int(lhs.wrapping_shl(rhs as u32)),
+            (Self::Int(lhs), Self::Int(rhs)) => Self::Int(lhs.wrapping_shl(rhs as u32)),
             _ => return Err(OperationError::TypeMissmatch),
         })
     }
 
     pub fn shift_right(self, rhs: Self) -> Result<Self, OperationError> {
         Ok(match (self, rhs) {
-            (L::Int(lhs), L::Int(rhs)) => L::Int(lhs >> rhs),
+            (Self::Int(lhs), Self::Int(rhs)) => Self::Int(lhs >> rhs),
             _ => return Err(OperationError::TypeMissmatch),
         })
     }
 
     pub fn cmp_eq(self, rhs: Self) -> Result<Self, OperationError> {
         Ok(match (self, rhs) {
-            (L::Int(lhs), L::Int(rhs)) => L::Bool(lhs == rhs),
-            (L::Float(lhs), L::Float(rhs)) => L::Bool(lhs == rhs),
-            (L::Bool(lhs), L::Bool(rhs)) => L::Bool(lhs == rhs),
-            (L::Nil, L::Nil) => L::Bool(true),
-            (L::Nil, _) | (_, L::Nil) => L::Bool(false),
-            (L::String(lhs), L::String(rhs)) => L::Bool(match (lhs.to_string(), rhs.to_string()) {
-                (Some(lhs), Some(rhs)) => match lhs.cmp(&rhs) {
-                    std::cmp::Ordering::Equal => true,
-                    _ => false,
-                },
-                _ => false,
-            }),
+            (Self::Int(lhs), Self::Int(rhs)) => Self::Bool(lhs == rhs),
+            (Self::Float(lhs), Self::Float(rhs)) => Self::Bool(lhs == rhs),
+            (Self::Bool(lhs), Self::Bool(rhs)) => Self::Bool(lhs == rhs),
+            (Self::Hampa, Self::Hampa) => Self::Bool(true),
+            (Self::Hampa, _) | (_, Self::Hampa) => Self::Bool(false),
             _ => return Err(OperationError::TypeMissmatch),
         })
     }
 
     pub fn cmp_neq(self, rhs: Self) -> Result<Self, OperationError> {
         Ok(match self.cmp_eq(rhs)? {
-            L::Bool(cond) => L::Bool(!cond),
+            Self::Bool(cond) => Self::Bool(!cond),
             _ => return Err(OperationError::TypeMissmatch),
         })
     }
 
     pub fn cmp_lt(self, rhs: Self) -> Result<Self, OperationError> {
         Ok(match (self, rhs) {
-            (L::Int(lhs), L::Int(rhs)) => L::Bool(lhs < rhs),
-            (L::Int(lhs), L::Float(rhs)) => L::Bool((lhs as f64) < rhs),
-            (L::Float(lhs), L::Int(rhs)) => L::Bool(lhs < rhs as f64),
-            (L::Float(lhs), L::Float(rhs)) => L::Bool(lhs < rhs),
+            (Self::Int(lhs), Self::Int(rhs)) => Self::Bool(lhs < rhs),
+            (Self::Int(lhs), Self::Float(rhs)) => Self::Bool((lhs as f64) < rhs),
+            (Self::Float(lhs), Self::Int(rhs)) => Self::Bool(lhs < rhs as f64),
+            (Self::Float(lhs), Self::Float(rhs)) => Self::Bool(lhs < rhs),
             _ => return Err(OperationError::TypeMissmatch),
         })
     }
 
     pub fn cmp_gt(self, rhs: Self) -> Result<Self, OperationError> {
         Ok(match (self, rhs) {
-            (L::Int(lhs), L::Int(rhs)) => L::Bool(lhs > rhs),
-            (L::Int(lhs), L::Float(rhs)) => L::Bool((lhs as f64) > rhs),
-            (L::Float(lhs), L::Int(rhs)) => L::Bool(lhs > rhs as f64),
-            (L::Float(lhs), L::Float(rhs)) => L::Bool(lhs > rhs),
+            (Self::Int(lhs), Self::Int(rhs)) => Self::Bool(lhs > rhs),
+            (Self::Int(lhs), Self::Float(rhs)) => Self::Bool((lhs as f64) > rhs),
+            (Self::Float(lhs), Self::Int(rhs)) => Self::Bool(lhs > rhs as f64),
+            (Self::Float(lhs), Self::Float(rhs)) => Self::Bool(lhs > rhs),
             _ => return Err(OperationError::TypeMissmatch),
         })
     }
